@@ -163,9 +163,12 @@ test('规则段不含插值组（含外部风格文本）', () => {
 	assert.ok(!prompt.hasInterpolationGroup(text), '规则段里残留了 {{…}}');
 });
 
-test('规则段包含技术内容不文学化的硬约束', () => {
+test('规则段把硬约束的边界限定在技术产物上', () => {
 	const text = prompt.compileRules({});
-	assert.match(text, /技术内容不做情绪修饰/);
+	// 回归测试：v0.1.1 的措辞是「技术内容不做情绪修饰」，
+	// 实际被理解成「只要这轮在谈技术就整段肃静」，吃掉了绝大部分表达空间。
+	assert.match(text, /只约束技术产物本身/);
+	assert.match(text, /不受此限/);
 	assert.match(text, /12 个汉字/);
 });
 
@@ -192,6 +195,24 @@ const style = await import('../lib/style.js');
 test('档案缺失时 renderStyle 返回空串', () => {
 	assert.strictEqual(style.renderStyle(null), '');
 	assert.strictEqual(style.renderStyle(undefined), '');
+});
+
+test('助手回复样例优先，且保留段落结构', () => {
+	// 场景错位的 few-shot 等于没给样例：小说段落教的是「小说怎么抒情」，
+	// 而不是「助手怎么带着语气把技术事情说清」。所以助手样例必须优先。
+	const profile = {
+		assistantSamples: ['第一句。\n\n第二段。'],
+		samples: ['这是小说段落，不该被同时渲染'],
+	};
+	const text = style.renderStyle(profile, 'balanced');
+	assert.match(text, /目标样例/);
+	assert.ok(text.includes('第一句。\n第二段。'), '段落结构被压平了 —— 断行本身就是笔法');
+	assert.ok(!text.includes('这是小说段落'), '有了助手样例就不该再渲染小说段落');
+});
+
+test('没有助手样例时回退到 samples', () => {
+	const profile = { samples: ['甲乙丙'] };
+	assert.match(style.renderStyle(profile, 'balanced'), /甲乙丙/);
 });
 
 test('renderStyle 按 styleBias 控制样例条数', () => {

@@ -150,17 +150,17 @@ console.log('\n提示词段行为');
 const rulesSection = captured.sections.find((s) => s.name === prompt.RULES_SECTION);
 const stateSection = captured.sections.find((s) => s.name === prompt.STATE_SECTION);
 
-check('规则段有内容且含硬约束', () => {
+check('规则段有内容且硬约束的边界在技术产物上', () => {
 	const text = rulesSection.text();
 	assert.ok(text.length > 200, '规则段过短');
-	assert.match(text, /技术内容不做情绪修饰/);
+	assert.match(text, /只约束技术产物本身/);
 });
 
-check('规则段吸收了风格档案（笔法块）', () => {
+check('规则段吸收了风格档案（笔法块 + 助手样例）', () => {
 	const text = rulesSection.text();
 	assert.match(text, /笔法参考/, '未注入笔法块 —— 风格档案没被加载');
 	assert.match(text, /平均句长约/, '缺少节奏量化');
-	assert.match(text, /严禁照抄/);
+	assert.match(text, /目标样例/, '缺少助手回复样例 —— few-shot 场景错位等于没给样例');
 });
 
 check('规则段无插值组', () => {

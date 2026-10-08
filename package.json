@@ -1,6 +1,6 @@
 {
   "name": "dsh-emotion",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "让 DSH agent 的输出自带情绪：会话投影状态机 + 提示词情绪段 + 会话头部情绪条（非官方插件）",
   "type": "module",
   "main": "lib/index.js",
