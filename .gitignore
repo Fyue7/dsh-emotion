@@ -1,0 +1,13 @@
+# 依赖与构建产物
+node_modules/
+pnpm-lock.yaml
+
+# ⚠️ 本地蒸馏出的风格档案：含版权作品的逐字原文，绝不入库
+# 用 style/style-profile.example.json 作为格式参考
+style/style-profile.json
+
+# 本机路径与临时文件
+*.log
+.DS_Store
+Thumbs.db
+*.tmp

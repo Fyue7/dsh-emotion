@@ -1,0 +1,37 @@
+MIT License
+
+Copyright (c) 2026 dsh-emotion contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+## 内容声明 / Content notice
+
+MIT 许可**仅覆盖本仓库的源代码**。
+
+`style/style-profile.example.json` 是纯粹自行编写的格式示例，不含任何第三方文本。
+
+本仓库**不包含**任何受版权保护的文学作品的原文。若你使用本仓库的蒸馏流水线
+处理自己的文本，由此产生的风格档案（含任何逐字摘录）由**你**负责其合规性，
+并被 `.gitignore` 排除在版本控制之外 —— 请勿将其提交到公开仓库。
+
+The MIT license covers **source code only**. This repository ships no text from
+any copyrighted work. Style profiles produced by the distillation pipeline from
+your own corpora are your responsibility and are git-ignored by default.
