@@ -102,6 +102,48 @@ test('labelOf / describeMood 有界且不抛错', () => {
 	}
 });
 
+test('长期顺利不会把心情顶到上限（回归基线）', () => {
+	// 回归测试：v1 没有任何衰减，连续 50 次工具成功就把 mood 顶到 +100 并锁死，
+	// 状态段此后每轮输出同一句话 —— 用户完全感觉不到情绪在变。
+	let s = state.initState();
+	for (let turn = 0; turn < 40; turn += 1) {
+		for (let i = 0; i < 10; i += 1) s = state.applyEvent(s, { type: 'tool/result', data: {} });
+		s = state.applyEvent(s, { type: 'turn/end', data: { reason: { kind: 'completed' } } });
+	}
+	assert.ok(s.mood < 60, `心情被顶到 ${s.mood} —— 回归机制没生效`);
+	assert.ok(s.mood > 0, `长期顺利却是负心情：${s.mood}`);
+});
+
+test('长期失败不会把心情钉死在下限', () => {
+	let s = state.initState();
+	for (let turn = 0; turn < 40; turn += 1) {
+		s = state.applyEvent(s, { type: 'tool/result', data: { message: { isError: true } } });
+		s = state.applyEvent(s, { type: 'turn/end', data: { reason: { kind: 'error' } } });
+	}
+	assert.ok(s.mood > -60, `心情被钉死在 ${s.mood}`);
+});
+
+test('轮次收尾后连续失败计数归零', () => {
+	let s = state.initState();
+	s = state.applyEvent(s, { type: 'tool/result', data: { message: { isError: true } } });
+	s = state.applyEvent(s, { type: 'tool/result', data: { message: { isError: true } } });
+	assert.equal(s.streakFail, 2);
+	s = state.applyEvent(s, { type: 'turn/end', data: { reason: { kind: 'completed' } } });
+	assert.equal(s.streakFail, 0, '新一轮应从零开始计连续失败');
+});
+
+test('能量有消耗也有恢复，不单向下滑', () => {
+	let good = state.initState();
+	for (let i = 0; i < 5; i += 1) good = state.applyEvent(good, { type: 'tool/result', data: {} });
+	good = state.applyEvent(good, { type: 'turn/end', data: { reason: { kind: 'completed' } } });
+	assert.ok(good.energy >= 70, `顺利一轮后能量反而掉到 ${good.energy}`);
+
+	let bad = state.initState();
+	for (let i = 0; i < 3; i += 1) bad = state.applyEvent(bad, { type: 'tool/result', data: { message: { isError: true } } });
+	bad = state.applyEvent(bad, { type: 'turn/end', data: { reason: { kind: 'error' } } });
+	assert.ok(bad.energy < 70, `失败一轮后能量没掉：${bad.energy}`);
+});
+
 console.log('\nlib/prompt.js');
 
 test('compileState 拿不到状态时返回空串（不抛错）', () => {
