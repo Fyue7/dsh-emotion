@@ -251,6 +251,24 @@ test('状态段含成因与轮次', () => {
 	assert.ok(!text.includes('亲密度'), '亲密度又回到了状态段');
 });
 
+test('声线块排在情绪规则之前', () => {
+	// 声线是常驻层，情绪叠在它上面。旧版把笔法块垫在最末，读起来像补充说明，
+	// 一碰到技术话题就被忽略 —— 这是「喂了一整本小说却没有那个文风」的一半原因。
+	const text = prompt.compileRules({ styleText: '[声线 · 测试]' });
+	assert.ok(text.includes('[声线 · 测试]'));
+	assert.ok(
+		text.indexOf('[声线 · 测试]') < text.indexOf('[情绪感知与表达]'),
+		'声线块被垫到了情绪规则后面',
+	);
+});
+
+test('落笔在最低档也不再劝它「别加戏」', () => {
+	const s = { ...state.initState(), mood: 0, energy: 70 };
+	const text = prompt.compileState({ state: s, intensity: 0 });
+	assert.match(text, /落笔：语气收着，写法不变。/);
+	assert.ok(!text.includes('不必加戏'), '低档落笔仍在劝它别加戏 —— 那正是平淡的来源');
+});
+
 test('落笔行随强度档变化，不是写死的常量', () => {
 	// 这一行每轮落在请求末尾，是模型动笔前最后读到的东西。写死等于白占位置。
 	const s = { ...state.initState(), mood: 30 };
@@ -324,25 +342,62 @@ test('档案缺失时 renderStyle 返回空串', () => {
 	assert.strictEqual(style.renderStyle(undefined), '');
 });
 
-test('助手回复样例优先，且保留段落结构', () => {
-	// 场景错位的 few-shot 等于没给样例：小说段落教的是「小说怎么抒情」，
-	// 而不是「助手怎么带着语气把技术事情说清」。所以助手样例必须优先。
+test('声线与两块样例都在，原文语感不被助手样例挤掉', () => {
+	// 这版修的就是旧行为：助手样例一旦存在，小说段落根本不渲染，
+	// 于是「喂了一整本小说却没有那个文风」。现在两块都必须在，且语感样例排最后（近因）。
 	const profile = {
+		narratorVoice: { shapes: ['长句铺完接一个判词短句'], banned: ['自伤与自毁句式'] },
 		assistantSamples: ['第一句。\n\n第二段。'],
-		samples: ['这是小说段落，不该被同时渲染'],
+		samples: ['原文语感段落'],
 	};
 	const text = style.renderStyle(profile, 'balanced');
-	assert.match(text, /目标样例/);
+	assert.match(text, /\[声线/);
+	assert.match(text, /\[写法\]/);
+	assert.match(text, /长句铺完接一个判词短句/);
+	assert.match(text, /不许出现的东西/);
+	assert.match(text, /自伤与自毁句式/);
+	assert.match(text, /同一套声线用在技术活上/);
 	assert.ok(text.includes('第一句。\n第二段。'), '段落结构被压平了 —— 断行本身就是笔法');
-	assert.ok(!text.includes('这是小说段落'), '有了助手样例就不该再渲染小说段落');
+	assert.match(text, /目标语感/);
+	assert.ok(text.includes('原文语感段落'), '原文语感样例被助手样例挤掉了 —— 那正是这版要修的旧行为');
+	assert.ok(
+		text.indexOf('原文语感段落') > text.indexOf('第一句。'),
+		'语感样例该排在最后（近因），否则会被助手样例盖住',
+	);
 });
 
-test('没有助手样例时回退到 samples', () => {
-	const profile = { samples: ['甲乙丙'] };
-	assert.match(style.renderStyle(profile, 'balanced'), /甲乙丙/);
+test('有 shapes 时不再重复渲染 directives 与意象域', () => {
+	// 实测发现的重复：shapes 与 styleDirectives 是同一批内容的两种说法，
+	// 一起渲染会在同一段里出现两次「越低落越要开个玩笑」，白占提示词。
+	const profile = {
+		narratorVoice: { shapes: ['越低落越要开个玩笑，情绪从玩笑的缝里漏出来'] },
+		styleDirectives: ['越低落越要开个玩笑，情绪从玩笑的缝隙里漏出来'],
+		imagery: ['用天气与光线写心情'],
+	};
+	const text = style.renderStyle(profile, 'balanced');
+	assert.strictEqual(text.split('开个玩笑').length - 1, 1, '同一句写法渲染了两次');
+	assert.ok(!text.includes('常用意象域'), '有 shapes 时仍在渲染意象域行');
+
+	// 降级路径：老档案没有 narratorVoice，照旧渲染 directives 与意象域
+	const legacy = style.renderStyle({ styleDirectives: ['收尾留一句轻的'], imagery: ['用食物写慰藉'] }, 'balanced');
+	assert.match(legacy, /收尾留一句轻的/);
+	assert.match(legacy, /常用意象域/);
 });
 
-test('renderStyle 按 styleBias 控制样例条数', () => {
+test('语感样例带着「专有名词不许进回复」的硬约束', () => {
+	// 档案里的语感段是原文摘句，其中有人名与家族名 —— 而硬约束不许出现原著角色名。
+	const text = style.renderStyle({ samples: ['他游泳很好。'] }, 'balanced');
+	assert.match(text, /专有名词/);
+});
+
+test('缺 narratorVoice 时优雅降级（不抛错，只少一段）', () => {
+	const text = style.renderStyle({ samples: ['甲乙丙'] }, 'balanced');
+	assert.match(text, /\[声线/);
+	assert.match(text, /甲乙丙/);
+	assert.ok(!text.includes('[写法]'), '没有 shapes 却渲染了空写法块');
+});
+
+test('renderStyle 按 styleBias 控制语感样例条数', () => {
 	const profile = {
 		rhythm: { avgSentenceLen: 28.2, medianSentenceLen: 23, shortSentenceRatio: 0.233, longSentenceRatio: 0.251 },
 		punctuation: { dash: 'rare', ellipsis: 'occasional' },
@@ -352,8 +407,9 @@ test('renderStyle 按 styleBias 控制样例条数', () => {
 	const restrained = style.renderStyle(profile, 'restrained');
 	const outgoing = style.renderStyle(profile, 'outgoing');
 	assert.match(restrained, /平均句长约 28\.2 字/);
-	assert.match(outgoing, /丙丙丙/);
-	assert.ok(!restrained.includes('丙丙丙'), 'restrained 档注入了过多样例');
+	assert.match(outgoing, /乙乙乙/);
+	assert.ok(!restrained.includes('乙乙乙'), 'restrained 档注入了过多语感样例');
+	assert.ok(!outgoing.includes('丙丙丙'), 'outgoing 档也只取两段 —— 原文样例是提示词里最贵的部分');
 	assert.ok(outgoing.length > restrained.length);
 });
 

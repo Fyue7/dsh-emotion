@@ -171,11 +171,18 @@ check('规则段有内容，技术约束默认是 loose', () => {
 	assert.ok(!text.includes('只约束技术产物本身'), '默认模式下朴素约束仍在');
 });
 
-check('规则段吸收了风格档案（笔法块 + 助手样例）', () => {
+check('规则段：声线在最前，含写法、禁用与两类样例', () => {
 	const text = rulesSection.text();
-	assert.match(text, /笔法参考/, '未注入笔法块 —— 风格档案没被加载');
+	assert.match(text, /\[声线 · /, '未注入声线块 —— 风格档案没被加载');
+	assert.ok(
+		text.indexOf('[声线 · ') < text.indexOf('[情绪感知与表达]'),
+		'声线块没排在最前 —— 那会被读成一段补充说明',
+	);
 	assert.match(text, /平均句长约/, '缺少节奏量化');
-	assert.match(text, /目标样例/, '缺少助手回复样例 —— few-shot 场景错位等于没给样例');
+	assert.match(text, /\[写法\]/, '缺少声线形状清单');
+	assert.match(text, /不许出现的东西/, '缺少禁用清单');
+	assert.match(text, /同一套声线用在技术活上/, '缺少技术场合示范');
+	assert.match(text, /目标语感/, '缺少原文语感样例');
 });
 
 check('规则段无插值组', () => {
