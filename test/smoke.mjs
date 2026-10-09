@@ -35,6 +35,7 @@ function check(label, fn) {
 function makeCtx() {
 	const captured = {
 		sections: [],
+		contexts: [],
 		projections: [],
 		listeners: [],
 		commands: [],
@@ -56,6 +57,10 @@ function makeCtx() {
 		systemPrompt: {
 			section(section) {
 				captured.sections.push(section);
+				return () => {};
+			},
+			context(entry) {
+				captured.contexts.push(entry);
 				return () => {};
 			},
 		},
@@ -96,15 +101,16 @@ check('导出 name / inject 正确', () => {
 	assert.deepEqual(plugin.inject, ['systemPrompt', 'sessionProjections']);
 });
 
-check('注册了恰好两个提示词段，order 正确', () => {
-	assert.strictEqual(captured.sections.length, 2);
-	const byName = Object.fromEntries(captured.sections.map((s) => [s.name, s]));
-	assert.ok(byName[prompt.RULES_SECTION], '缺少 rules 段');
-	assert.ok(byName[prompt.STATE_SECTION], '缺少 state 段');
-	assert.strictEqual(byName[prompt.RULES_SECTION].order, 2);
-	assert.strictEqual(byName[prompt.STATE_SECTION].order, 10150);
-	assert.strictEqual(typeof byName[prompt.RULES_SECTION].text, 'function');
-	assert.strictEqual(typeof byName[prompt.STATE_SECTION].text, 'function');
+check('规则进系统提示词，状态进 runtime-context，位置正确', () => {
+	assert.strictEqual(captured.sections.length, 1, '系统提示词里只该有静态规则段');
+	assert.strictEqual(captured.contexts.length, 1, '动态状态该走 runtime-context');
+	assert.strictEqual(captured.sections[0].name, prompt.RULES_SECTION);
+	assert.strictEqual(captured.sections[0].order, 2);
+	assert.strictEqual(typeof captured.sections[0].text, 'function');
+	assert.strictEqual(captured.contexts[0].name, prompt.STATE_CONTEXT);
+	assert.strictEqual(captured.contexts[0].order, prompt.STATE_CONTEXT_ORDER);
+	assert.ok(captured.contexts[0].order > 120, '状态应排在宿主自用 context 位之后');
+	assert.strictEqual(typeof captured.contexts[0].text, 'function');
 });
 
 check('注册了情绪投影，definition 完整', () => {
@@ -148,12 +154,16 @@ check('监听 session/event 仅用于跨会话亲密度', () => {
 console.log('\n提示词段行为');
 
 const rulesSection = captured.sections.find((s) => s.name === prompt.RULES_SECTION);
-const stateSection = captured.sections.find((s) => s.name === prompt.STATE_SECTION);
+const stateContext = captured.contexts.find((c) => c.name === prompt.STATE_CONTEXT);
 
-check('规则段有内容且硬约束的边界在技术产物上', () => {
+check('规则段有内容，技术约束默认是 loose', () => {
 	const text = rulesSection.text();
 	assert.ok(text.length > 200, '规则段过短');
-	assert.match(text, /只约束技术产物本身/);
+	// 默认 loose：朴素约束被禁掉，换成「讲法放开、信息不省」
+	assert.match(text, /技术内容不再要求朴素/);
+	assert.match(text, /信息不省/);
+	assert.ok(!text.includes('留白'), 'loose 模式又混进了「留白」—— 那会砍信息量');
+	assert.ok(!text.includes('只约束技术产物本身'), '默认模式下朴素约束仍在');
 });
 
 check('规则段吸收了风格档案（笔法块 + 助手样例）', () => {
@@ -168,13 +178,13 @@ check('规则段无插值组', () => {
 });
 
 check('状态段：无会话时返回空串', () => {
-	assert.strictEqual(stateSection.text({}), '');
-	assert.strictEqual(stateSection.text(undefined), '');
+	assert.strictEqual(stateContext.text({}), '');
+	assert.strictEqual(stateContext.text(undefined), '');
 });
 
 check('状态段：有会话时渲染状态', () => {
 	ctx._fake.setState({ ...state.initState(), mood: 24, energy: 66, turn: 5, lastKind: 'tool-ok' });
-	const text = stateSection.text({ agent: { session: ctx._fake.fakeSession } });
+	const text = stateContext.text({ agent: { session: ctx._fake.fakeSession } });
 	assert.match(text, /当前情绪状态/);
 	assert.match(text, /第 5 轮/);
 	assert.match(text, /强度 \d\/3/);
@@ -204,12 +214,31 @@ check('/mood off 后两个段都为空', () => {
 	const result = handler(invocation('off'));
 	assert.strictEqual(result.kind, 'success');
 	assert.strictEqual(rulesSection.text(), '', 'off 之后规则段仍在注入');
-	assert.strictEqual(stateSection.text({ agent: { session: ctx._fake.fakeSession } }), '', 'off 之后状态段仍在注入');
+	assert.strictEqual(stateContext.text({ agent: { session: ctx._fake.fakeSession } }), '', 'off 之后状态段仍在注入');
 });
 
 check('/mood on 恢复注入', () => {
 	handler(invocation('on'));
 	assert.ok(rulesSection.text().length > 200, 'on 之后规则段没回来');
+});
+
+check('/mood plain=on 切回朴素模式，plain=off 放开', () => {
+	const on = handler(invocation('plain=on'));
+	assert.strictEqual(on.kind, 'success');
+	assert.match(rulesSection.text(), /只约束技术产物本身/);
+
+	const off = handler(invocation('plain=off'));
+	assert.strictEqual(off.kind, 'success');
+	assert.match(rulesSection.text(), /技术内容不再要求朴素/);
+
+	const bad = handler(invocation('plain=maybe'));
+	assert.strictEqual(bad.kind, 'error');
+	assert.match(bad.text, /只接受 on\|off/);
+});
+
+check('/mood 状态文本报出技术内容模式', () => {
+	const result = handler(invocation(''));
+	assert.match(result.text, /技术内容=/);
 });
 
 check('改配置项合法值与非法值', () => {
@@ -235,14 +264,14 @@ check('mood= 写入本会话临时调整量并影响状态段', () => {
 	const result = handler(invocation('mood=50'));
 	assert.strictEqual(result.kind, 'success');
 	ctx._fake.setState({ ...state.initState(), mood: 0, turn: 2 });
-	const text = stateSection.text({ agent: { session: ctx._fake.fakeSession } });
+	const text = stateContext.text({ agent: { session: ctx._fake.fakeSession } });
 	assert.match(text, /心情 \+50/, '手动调整量未生效');
 });
 
 check('/mood reset 清掉临时调整量', () => {
 	handler(invocation('reset'));
 	ctx._fake.setState({ ...state.initState(), mood: 0, turn: 2 });
-	const text = stateSection.text({ agent: { session: ctx._fake.fakeSession } });
+	const text = stateContext.text({ agent: { session: ctx._fake.fakeSession } });
 	assert.match(text, /心情 0/);
 });
 

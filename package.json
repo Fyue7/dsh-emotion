@@ -1,6 +1,6 @@
 {
   "name": "dsh-emotion",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "让 DSH agent 的输出自带情绪：会话投影状态机 + 提示词情绪段 + 会话头部情绪条（非官方插件）",
   "type": "module",
   "main": "lib/index.js",
@@ -44,7 +44,7 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.4",
-    "@deepseek-ai/dsh-system-prompt": ">=0.1.7-rc.2 <0.3.0-0",
+    "@deepseek-ai/dsh-system-prompt": ">=0.2.0-rc.2 <0.3.0-0",
     "@deepseek-ai/dsh-session-projection": ">=0.1.7-rc.2 <0.3.0-0",
     "@deepseek-ai/dsh-commands": ">=0.1.7-rc.2 <0.3.0-0",
     "@deepseek-ai/dsh-home-paths": ">=0.1.7-rc.2 <0.3.0-0",

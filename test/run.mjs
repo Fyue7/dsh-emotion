@@ -163,13 +163,27 @@ test('规则段不含插值组（含外部风格文本）', () => {
 	assert.ok(!prompt.hasInterpolationGroup(text), '规则段里残留了 {{…}}');
 });
 
-test('规则段把硬约束的边界限定在技术产物上', () => {
-	const text = prompt.compileRules({});
+test('技术内容的两种约束可切换', () => {
+	// loose：技术内容允许带口气，「不做文学化改写」那条被禁掉。
+	// 注意 compileRules 自身默认 plain（保守），插件配置默认才是 loose。
+	const loose = prompt.compileRules({ plainTechnical: false });
+	assert.match(loose, /技术内容不再要求朴素/);
+	// 关键：放开的是讲法，不是信息量
+	assert.match(loose, /信息不省/);
+	assert.match(loose, /技术完整性压过/);
+	assert.ok(!loose.includes('留白'), 'loose 模式又混进了「留白」—— 那会砍信息量');
+	assert.ok(!loose.includes('只约束技术产物本身'), '默认模式仍带着朴素约束');
+
+	// plain：回到历史行为，边界限定在技术产物上。
 	// 回归测试：v0.1.1 的措辞是「技术内容不做情绪修饰」，
 	// 实际被理解成「只要这轮在谈技术就整段肃静」，吃掉了绝大部分表达空间。
-	assert.match(text, /只约束技术产物本身/);
-	assert.match(text, /不受此限/);
-	assert.match(text, /12 个汉字/);
+	const plain = prompt.compileRules({ plainTechnical: true });
+	assert.match(plain, /只约束技术产物本身/);
+	assert.match(plain, /不受此限/);
+
+	// 两条不可协商的约束在两种模式下都得在。
+	assert.match(loose, /12 个汉字/);
+	assert.match(plain, /12 个汉字/);
 });
 
 test('状态段随强度档变化', () => {

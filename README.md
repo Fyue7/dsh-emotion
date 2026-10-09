@@ -9,7 +9,7 @@
 | 能力 | 说明 |
 |---|---|
 | **持续情绪状态** | 会话投影里的 `emotion` 单元：心情 / 能量 / 轮数 / 连续成败。随工具调用结果、模型重试、轮次收尾变化，跨轮累积，**宿主负责持久化** |
-| **两段提示词** | `emotion:rules`（order 2，静态规则）+ `emotion:state`（order 10150，动态状态）。动态段刻意放在提示词尾部以保护 prompt cache |
+| **两段注入** | `emotion:rules`（system prompt section，order 2，静态规则）+ `emotion:state`（runtime-context，order 130，动态状态）。动态段走宿主请求**末尾**的 runtime-context 快照，前面的历史照常命中原有前缀缓存 |
 | **会话头部情绪条** | emoji + 基调词 + 心情条；hover 看成因、能量、轮数。走宿主已有的会话投影通道，**不新增任何 HTTP 路由** |
 | **`/mood` 命令族** | 配置入口，含 `/mood why` —— 直接打印实际注入给模型的提示词 |
 | **风格档案** | 可选的人格/文风层。探测 `$DSH_HOME/dsh-emotion/style-profile.json`，缺失时用随包的格式示例，再缺失则只注入情绪规则（优雅降级） |
@@ -23,15 +23,46 @@
 
 本地规则**只**消费可观测事件，不解析对话内容 —— 不重复造一个更差的意图识别器。
 
-## 硬约束（不可协商，无开关）
+## 约束分两层
 
-- **技术内容不做情绪修饰**：代码、命令、路径、报错、参数、数字一律保持朴素准确，不比喻、不拟人、不抒情。
+### 不可协商（无开关）
+
+- **信息不许缩水**：该报的数字、结论、报错、风险一条不少。技术完整性压过任何行数预算。
 - 不复述原著情节、不出现角色名、不输出暴力/伤亡/宗教/自毁/牺牲类表达。
 - **不成段复现任何原文**：连续 12 个汉字以上与原文一致的表达一律不得出现。
+- 不播报情绪数值。
 
 > 为什么是 12 字：把文本切成 12-gram 后，七万级片段里 99.8% 只出现一次，说明「罕见度」判据几乎恒真，
 > **真正的判别量是长度**；12 字刚好放过「我靠」这类通用表达。
 > 这一条是被实测验证过的 —— 一个只在 60 条里抽查的校验会漏掉 1% 级的系统性错误。
+
+### 可切换：技术内容要不要保持朴素
+
+这一层只管**讲法**，不管信息量。
+
+| 模式 | 技术内容怎么讲 |
+|---|---|
+| `plain` | 代码、命令、路径、报错、参数、数字一律朴素准确，不比喻、不拟人、不抒情。情绪只落在过渡句与收尾上 —— 这是 v0.1.x 的行为 |
+| `loose`（**默认**） | 数字、路径、报错原文仍然逐字不许改，但怎么讲由模型定：可以比喻，可以带着口气讲一段技术过程 |
+
+```
+/mood plain=on     # 回到朴素模式
+/mood plain=off    # 放开讲法
+```
+
+或写进 profile 配置：
+
+```yaml
+- id: emotion
+  name: dsh-emotion
+  config:
+    plainTechnical: false
+```
+
+为什么默认 `loose`：`plain` 那条一旦摆在规则里，模型会把「技术内容保持朴素」读成「只要这轮在谈技术就整段肃静」，
+于是所有回复都长成说明书 —— 这是实测出来的，不是推测。而 `loose` 只放开讲法，信息量另有条款锁着，两者不冲突。
+
+> 需要宿主 `@deepseek-ai/dsh-system-prompt` 提供 `systemPrompt.context()`（runtime-context 注册面，0.2.0-rc 起）。
 
 ## 安装
 
@@ -69,6 +100,16 @@ dsh plugin --profile <name> add ./path/to/dsh-emotion
 > 更糟的是失败是静默的：旧副本继续跑旧代码，你只会觉得「改了怎么没效果」。
 > 所以开发期推荐 `link:`。
 
+`file:` 安装下确实要改副本时，仓库自带一个同步工具（对比 + 拷贝，不做别的）：
+
+```powershell
+node tools/sync.mjs           # 同步 lib/ client/ style/ package.json
+node tools/sync.mjs --check   # 只比对，有差异则以退出码 1 结束（CI 用）
+```
+
+它解决的是同一个坑的另一半：在 `E:\...\dsh-emotion` 改完源码，`~/.dsh/profiles/<name>/node_modules/dsh-emotion`
+里那份**不会跟着变** —— 两边文件其实长得一模一样，只是各是各的。同步完仍需**完全重启** Harness，模块缓存不会自己刷新。
+
 安装后重启 DSH。验证层已生效（不启动）：
 
 ```powershell
@@ -87,6 +128,7 @@ dsh --profile <name> --dump-config
     intensity: mid          # low | mid | high
     styleBias: balanced     # restrained | balanced | outgoing
     styleProfile: auto      # auto | off
+    plainTechnical: false   # true = 技术内容保持朴素（v0.1.x 行为）
 ```
 
 `enabled: false` 时两个段都不注入，行为与官方一致。
@@ -100,6 +142,7 @@ dsh --profile <name> --dump-config
 | `/mood why` | **打印实际注入的两段原文** —— 排查「它今天怎么这么冷淡」的第一现场 |
 | `/mood reset` | 清除本会话的手动调整量 |
 | `/mood intensity=high style=outgoing profile=off` | 改运行时配置 |
+| `/mood plain=on` / `plain=off` | 技术内容切回朴素 / 放开讲法 |
 | `/mood mood=20 energy=80` | 设本会话**调整量**（投影状态本身不可写，见下） |
 
 ## 风格档案
