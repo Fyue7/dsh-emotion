@@ -132,16 +132,63 @@ test('轮次收尾后连续失败计数归零', () => {
 	assert.equal(s.streakFail, 0, '新一轮应从零开始计连续失败');
 });
 
-test('能量有消耗也有恢复，不单向下滑', () => {
-	let good = state.initState();
-	for (let i = 0; i < 5; i += 1) good = state.applyEvent(good, { type: 'tool/result', data: {} });
-	good = state.applyEvent(good, { type: 'turn/end', data: { reason: { kind: 'completed' } } });
-	assert.ok(good.energy >= 70, `顺利一轮后能量反而掉到 ${good.energy}`);
+test('单轮里调几十次工具也不会把心情顶到饱和', () => {
+	// 回归测试（v3 的主刀）：v2 是「每次成功 +2、只在轮末砍半」，
+	// 一轮里 50 次工具调用就把 mood 顶到 +96（实测值），此后的状态段每轮都是同一行字。
+	// 事件级指数回归必须把一轮之内的稳态压在 ±25 附近。
+	let s = state.initState();
+	for (let i = 0; i < 50; i += 1) {
+		s = state.applyEvent(s, { type: 'tool/call', data: { name: 'pwsh', arguments: '{}' } });
+		s = state.applyEvent(s, { type: 'tool/result', data: {} });
+	}
+	assert.ok(s.mood <= 40, `一轮之内心情爬到 ${s.mood} —— 事件级回归没生效`);
+	assert.ok(s.mood > 0, `一轮顺利却是负心情：${s.mood}`);
+});
 
-	let bad = state.initState();
-	for (let i = 0; i < 3; i += 1) bad = state.applyEvent(bad, { type: 'tool/result', data: { message: { isError: true } } });
-	bad = state.applyEvent(bad, { type: 'turn/end', data: { reason: { kind: 'error' } } });
-	assert.ok(bad.energy < 70, `失败一轮后能量没掉：${bad.energy}`);
+test('tool/call 记下改动过的文件（去重、只留末两段、上限 3 个）', () => {
+	let s = state.initState();
+	const call = (name, file) => {
+		s = state.applyEvent(s, { type: 'tool/call', data: { name, arguments: JSON.stringify({ file_path: file }) } });
+	};
+	call('edit', 'E:\\agent\\projects\\dsh-emotion\\lib\\state.js');
+	assert.deepEqual(s.files, ['lib/state.js'], '没取到文件的末两段');
+
+	call('edit', 'E:\\agent\\projects\\dsh-emotion\\lib\\state.js');
+	assert.deepEqual(s.files, ['lib/state.js'], '同一个文件被记了两次');
+
+	call('write', '/a/b/c/d/prompt.js');
+	call('edit', 'x/y/z/third.js');
+	call('edit', 'x/y/z/fourth.js');
+	assert.equal(s.files.length, 3, '没按上限截断');
+	assert.deepEqual(s.files, ['d/prompt.js', 'z/third.js', 'z/fourth.js']);
+	assert.equal(s.toolCalls, 5);
+});
+
+test('只有 edit/write 算「动过文件」', () => {
+	// read/grep 走过一百个文件也不代表这一轮在做这件事 —— 素材宁可少，不可脏。
+	let s = state.initState();
+	s = state.applyEvent(s, { type: 'tool/call', data: { name: 'read', arguments: '{"file_path":"a/b/c.js"}' } });
+	s = state.applyEvent(s, { type: 'tool/call', data: { name: 'pwsh', arguments: '{"command":"dir"}' } });
+	s = state.applyEvent(s, { type: 'tool/call', data: { name: 'edit', arguments: '这不是 JSON' } });
+	assert.deepEqual(s.files, [], '无关工具或坏参数污染了素材');
+	assert.equal(s.toolCalls, 3);
+});
+
+test('新一轮清空实况，但保留心情与轮次', () => {
+	let s = state.initState();
+	s = state.applyEvent(s, { type: 'tool/call', data: { name: 'edit', arguments: '{"file_path":"a/b.js"}' } });
+	s = state.applyEvent(s, { type: 'tool/result', data: { message: { isError: true } } });
+	assert.equal(s.files.length, 1);
+	assert.equal(s.failed, 1);
+
+	s = state.applyEvent(s, { type: 'turn/end', data: { reason: { kind: 'completed' } } });
+	const mood = s.mood;
+	s = state.applyEvent(s, { type: 'turn/start', data: {} });
+	assert.deepEqual(s.files, []);
+	assert.equal(s.toolCalls, 0);
+	assert.equal(s.failed, 0);
+	assert.equal(s.turn, 1, '轮次不该被实况清理带走');
+	assert.equal(s.mood, mood, '清实况不该动心情');
 });
 
 console.log('\nlib/prompt.js');
@@ -196,10 +243,76 @@ test('状态段随强度档变化', () => {
 
 test('状态段含成因与轮次', () => {
 	const s = { ...state.initState(), turn: 7, lastKind: 'blocked', streakFail: 3 };
-	const text = prompt.compileState({ state: s, closeness: 34 });
+	const text = prompt.compileState({ state: s });
 	assert.match(text, /第 7 轮/);
 	assert.match(text, /连续受阻/);
-	assert.match(text, /亲密度 34/);
+	// v3：亲密度从状态段移除 —— 跨会话只涨不跌、封顶 100 之后这一行每轮都是同一个数，
+	// 零信息还占着请求尾部的预算。数值本身仍在 /mood 与客户端 tooltip 里。
+	assert.ok(!text.includes('亲密度'), '亲密度又回到了状态段');
+});
+
+test('落笔行随强度档变化，不是写死的常量', () => {
+	// 这一行每轮落在请求末尾，是模型动笔前最后读到的东西。写死等于白占位置。
+	const s = { ...state.initState(), mood: 30 };
+	const hint = (text) => text.split('\n').find((line) => line.startsWith('落笔：'));
+	const low = prompt.compileState({ state: s, intensity: 0 });
+	const high = prompt.compileState({ state: s, intensity: 3 });
+	assert.ok(hint(low) && hint(high), '状态段里没有落笔行');
+	assert.notEqual(hint(low), hint(high), '落笔行没有随强度变化');
+});
+
+test('状态里的数值是整数（小数不该漏进提示词）', () => {
+	// 指数回归会自然产出小数；取整必须发生在**每一步**，否则注入的是
+	// 「心情 +22.97800615166195」这种又难看又白烧 token 的东西。
+	let s = state.initState();
+	for (let i = 0; i < 17; i += 1) s = state.applyEvent(s, { type: 'tool/result', data: {} });
+	assert.ok(Number.isInteger(s.mood), `心情漏出了小数：${s.mood}`);
+
+	s = state.applyEvent(s, { type: 'turn/end', data: { reason: { kind: 'completed' } } });
+	assert.ok(Number.isInteger(s.mood), `轮末心情漏出小数：${s.mood}`);
+	assert.ok(Number.isInteger(s.energy), `轮末能量漏出小数：${s.energy}`);
+
+	const text = prompt.compileState({ state: s });
+	assert.ok(!/\d\.\d/.test(text), `状态段里出现了小数：${text}`);
+});
+
+test('规则段带着「不许编关系」的硬边界', () => {
+	const text = prompt.compileRules({});
+	assert.match(text, /只许说发生过的/);
+	assert.match(text, /不许提、不许补、不许推测/);
+});
+
+test('实况段：没有素材就是空串', () => {
+	// 反编造的兜底就在这里：素材为空 → 段为空 → 模型手里没有可编的原料。
+	assert.strictEqual(prompt.compileScene({}), '');
+	assert.strictEqual(prompt.compileScene({ state: null }), '');
+	assert.strictEqual(prompt.compileScene({ state: state.initState() }), '');
+});
+
+test('实况段只陈述素材里的事实', () => {
+	const text = prompt.compileScene({
+		state: { ...state.initState(), toolCalls: 12, files: ['lib/state.js', 'lib/prompt.js'], failed: 2 },
+	});
+	assert.match(text, /这一轮调了 12 次工具/);
+	assert.match(text, /lib\/state\.js、lib\/prompt\.js/);
+	assert.match(text, /这一轮有 2 次没成功/);
+	// 素材里没有的东西，这段代码没有资格说 —— 关系措辞只该由模型基于素材自己判断
+	assert.ok(!/陪|一直|记得|想念|我们/.test(text), `实况段里出现了关系措辞：${text}`);
+});
+
+test('实况段最多列 3 个文件', () => {
+	const text = prompt.compileScene({
+		state: { ...state.initState(), toolCalls: 9, files: ['a/1.js', 'b/2.js', 'c/3.js', 'd/4.js'] },
+	});
+	assert.ok(text.includes('a/1.js') && text.includes('c/3.js'));
+	assert.ok(!text.includes('d/4.js'), '文件列表没按上限截断');
+});
+
+test('实况段无素材时不出现「实况」二字以外的空壳', () => {
+	// 有工具调用但没动过文件：只说调用次数，不编文件
+	const text = prompt.compileScene({ state: { ...state.initState(), toolCalls: 4 } });
+	assert.match(text, /这一轮调了 4 次工具/);
+	assert.ok(!text.includes('动过'), '没动过文件却说动过');
 });
 
 console.log('\nlib/style.js');

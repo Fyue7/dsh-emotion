@@ -101,16 +101,20 @@ check('导出 name / inject 正确', () => {
 	assert.deepEqual(plugin.inject, ['systemPrompt', 'sessionProjections']);
 });
 
-check('规则进系统提示词，状态进 runtime-context，位置正确', () => {
+check('规则进系统提示词，状态与实况进 runtime-context，位置正确', () => {
 	assert.strictEqual(captured.sections.length, 1, '系统提示词里只该有静态规则段');
-	assert.strictEqual(captured.contexts.length, 1, '动态状态该走 runtime-context');
+	assert.strictEqual(captured.contexts.length, 2, '状态段与实况段都该走 runtime-context');
 	assert.strictEqual(captured.sections[0].name, prompt.RULES_SECTION);
 	assert.strictEqual(captured.sections[0].order, 2);
 	assert.strictEqual(typeof captured.sections[0].text, 'function');
 	assert.strictEqual(captured.contexts[0].name, prompt.STATE_CONTEXT);
 	assert.strictEqual(captured.contexts[0].order, prompt.STATE_CONTEXT_ORDER);
-	assert.ok(captured.contexts[0].order > 120, '状态应排在宿主自用 context 位之后');
-	assert.strictEqual(typeof captured.contexts[0].text, 'function');
+	assert.strictEqual(captured.contexts[1].name, prompt.SCENE_CONTEXT);
+	assert.strictEqual(captured.contexts[1].order, prompt.SCENE_CONTEXT_ORDER);
+	for (const entry of captured.contexts) {
+		assert.ok(entry.order > 120, `${entry.name} 应排在宿主自用 context 位之后`);
+		assert.strictEqual(typeof entry.text, 'function');
+	}
 });
 
 check('注册了情绪投影，definition 完整', () => {
@@ -155,6 +159,7 @@ console.log('\n提示词段行为');
 
 const rulesSection = captured.sections.find((s) => s.name === prompt.RULES_SECTION);
 const stateContext = captured.contexts.find((c) => c.name === prompt.STATE_CONTEXT);
+const sceneContext = captured.contexts.find((c) => c.name === prompt.SCENE_CONTEXT);
 
 check('规则段有内容，技术约束默认是 loose', () => {
 	const text = rulesSection.text();
@@ -190,6 +195,28 @@ check('状态段：有会话时渲染状态', () => {
 	assert.match(text, /强度 \d\/3/);
 });
 
+check('实况段：无会话 / 无素材时返回空串', () => {
+	assert.strictEqual(sceneContext.text({}), '');
+	assert.strictEqual(sceneContext.text(undefined), '');
+	ctx._fake.setState(state.initState());
+	assert.strictEqual(sceneContext.text({ agent: { session: ctx._fake.fakeSession } }), '');
+});
+
+check('实况段：有素材时只陈述事实', () => {
+	ctx._fake.setState({
+		...state.initState(),
+		toolCalls: 12,
+		files: ['lib/state.js', 'lib/prompt.js'],
+		failed: 2,
+	});
+	const text = sceneContext.text({ agent: { session: ctx._fake.fakeSession } });
+	assert.match(text, /本轮实况/);
+	assert.match(text, /这一轮调了 12 次工具/);
+	assert.match(text, /lib\/state\.js、lib\/prompt\.js/);
+	assert.match(text, /2 次没成功/);
+	assert.ok(!prompt.hasInterpolationGroup(text));
+});
+
 console.log('\n命令族');
 
 const handler = captured.commands[0].handler;
@@ -201,6 +228,7 @@ check('/mood 输出状态与配置', () => {
 	assert.match(result.text, /情绪插件：已开启/);
 	assert.match(result.text, /风格档案：/);
 	assert.match(result.text, /schema 校验/);
+	assert.match(result.text, /本轮实况：调了/);
 });
 
 check('/mood why 打印实际注入文本', () => {
@@ -208,13 +236,15 @@ check('/mood why 打印实际注入文本', () => {
 	assert.strictEqual(result.kind, 'success');
 	assert.match(result.text, /emotion:rules/);
 	assert.match(result.text, /emotion:state/);
+	assert.match(result.text, /emotion:scene/);
 });
 
-check('/mood off 后两个段都为空', () => {
+check('/mood off 后三个段都为空', () => {
 	const result = handler(invocation('off'));
 	assert.strictEqual(result.kind, 'success');
 	assert.strictEqual(rulesSection.text(), '', 'off 之后规则段仍在注入');
 	assert.strictEqual(stateContext.text({ agent: { session: ctx._fake.fakeSession } }), '', 'off 之后状态段仍在注入');
+	assert.strictEqual(sceneContext.text({ agent: { session: ctx._fake.fakeSession } }), '', 'off 之后实况段仍在注入');
 });
 
 check('/mood on 恢复注入', () => {
